@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const fse = require('fs-extra')
 const sharp = require('sharp');
-const icongen = require( 'icon-gen' );
+const icongen = require('icon-gen');
 
 const args = process.argv.slice(2);
 
@@ -28,206 +28,102 @@ const dirsToCreate = [
 	'mac'
 ]
 
-fs.access(pathToPng, (err) => {
-  if (err) {
-    if (err.code === 'ENOENT') {
-      console.error(`png file doesn't exist`);
-      return;
-    }
+try {
+	fs.accessSync(pathToPng);
+} catch (e) {
+	if (e.code === 'ENOENT') {
+		console.error(`png file doesn't exist`);
+	}
 
-    throw err;
-    process.exit(-1);
-  }
-});
+	console.error(e);
+	process.exit(-1);
+}
 
-const resizePngPromises = sizes.map(size => {
+const resizePngPromises = sizes.map(size =>
+	sharp(pathToPng)
+		.resize(size, size)
+		.png()
+		.toBuffer()
+		.then(outputBuffer => ({
+			outputBuffer,
+			size
+		}))
+);
 
-	return new Promise(
-		(resolve, reject) => {
-			sharp(pathToPng)
-				.resize(size, size)
-				.background({r: 0, g: 0, b: 0, alpha: 0})
-				.embed()
-				.toFormat('png')
-				.toBuffer(function(err, outputBuffer) {
-					if (err) {
-						throw err
-						reject(err);
-					}
-
-					return resolve({
-						outputBuffer,
-						size
-					})
-
-				});
-		}
-	)
-
-})
-
-const savePngs = (pngs) => {
-
-	const savePngPromises = pngs.map(
-		png => new Promise (
-			(resolve, reject) => {
-				fs.writeFile(`icons/png/${png.size}.png`, png.outputBuffer, function (err) {
-					if (err) {
-						throw err
-						return reject(err);
-					}
-
-					return resolve();
-				})
+const savePngs = pngs => {
+	return Promise.all(pngs.map(png => new Promise((resolve, reject) => {
+		fs.writeFile(`icons/png/${png.size}.png`, png.outputBuffer, function (err) {
+			if (err) {
+				reject(err);
+			} else {
+				resolve();
 			}
-		)
-	)
-
-	return Promise.all(savePngPromises);
-
+		})
+	})));
 }
 
 const createDirectories = () => {
-
-	const createDirsPromises = dirsToCreate.map(
-		dir => new Promise (
-			(resolve, reject) => {
-				fs.mkdir(`icons/${dir}`, allRWEPermissions, (err) => {
-
-					if(err) {
-						throw err;
-					}
-
-					console.log('created ' + dir)
-
-					resolve();
-
-				});
+	return Promise.all(dirsToCreate.map(dir => new Promise((resolve, reject) => {
+		fs.mkdir(`icons/${dir}`, allRWEPermissions, (err) => {
+			if (err) {
+				reject(err);
+			} else {
+				resolve();
 			}
-		)
-	)
-
-	return Promise.all(createDirsPromises);
-
+		});
+	})));
 }
 
-const removeiconsDirs = () => {
-	
-	return new Promise (
-		(resolve, reject) => {
+const removeiconsDirs = () => new Promise((resolve, reject) => fse.remove('icons', err => {
+	if (err) {
+		reject(err);
+	} else {
+		resolve();
+	}
+}));
 
-			fse.remove('icons', err => {
 
-				if(err) {
-					reject(err);
-					throw err;
-				}
+const readDir = (dirSrc) => new Promise((res, rej) => fs.readdir(dirSrc, (err, files) => {
+	if (err) {
+		rej(err);
+	} else {
+		res(files.map(file => ({
+			filename: file,
+			path: path.join(dirSrc, file)
+		})));
+	}
+}));
 
-				return resolve();
-
-			})
-
-		}
-	)
-
-}
-
-const readDir = (dirSrc) => {
-	return new Promise (
-		(res, rej) => {
-			fs.readdir(dirSrc, (err, files) => {
-				if(err)
-					rej(err);
-
-				res(files.map((file) => {
-					return {
-						filename: file,
-						path: path.join(dirSrc, file)
-					}
-				}));
-			})
-		}
-	)
-}
 
 const renamePngs = () => {
 	const pngOutputDir = './icons/png';
-
 	readDir(pngOutputDir)
-		.then(files => {
-
-			const filesPromises = files.map(
-				file => new Promise ((resolve, reject) => {
-
-					const size = file.filename.split('.')[0];
-
-					fs.rename(file.path, path.join(pngOutputDir, `${size}x${size}.png`), (err) => {
-
-						if(err) {
-							throw err;
-							return reject(err);
-						}
-
-						console.log(`renamed ${size}.png`)
-
-						return resolve();
-
-					})
-
-				})
-			)
-
-			Promise.all(
-				filesPromises
-			).then(
-				() => console.log('renamed all')
-			)
-
-		})
+		.then(files => Promise.all(files.map(file => new Promise((resolve, reject) => {
+			const size = file.filename.split('.')[0];
+			fs.rename(file.path, path.join(pngOutputDir, `${size}x${size}.png`), (err) => {
+				if (err) {
+					throw err;
+				}
+				return resolve();
+			})
+		}))))
+		.then(() => console.log('renamed all'))
 }
 
-const generateIcons = (outputDir, mode) => {
-	return icongen('./icons/png', outputDir, {type: 'png',names: {mode:'icon'}, modes:[mode]})
-}
+const generateIcons =
+	(outputDir, mode) => icongen('./icons/png', outputDir, {
+		report: true,
+		ico: mode == 'ico' ? {} : undefined,
+		icns: mode == 'icns' ? {} : undefined
+	});
 
 // start execution
 
 removeiconsDirs()
-	.then(
-		() => fs.mkdir('icons', allRWEPermissions, () => {
-
-			createDirectories()
-				.then(
-					values => {
-						Promise.all(resizePngPromises)
-							.then(
-								values => {
-
-									savePngs(values)
-										.then(values =>{
-											console.log('icons PNGS')
-											generateIcons('./icons/win', 'ico')
-											.then((results) => {
-												console.log('icons ICO')
-												generateIcons('./icons/mac', 'icns')
-												.then((results) => {
-												  console.log('icons ICNS')
-												  renamePngs()
-												})
-												.catch((err) => {
-												  console.error(err)
-												});
-											})
-											.catch((err) => {
-											  console.error(err)
-											});
-										})
-									
-
-								}
-							)
-					}
-				)
-
-		})
-	)
+	.then(() => new Promise(resolve => fs.mkdir('icons', allRWEPermissions, resolve)))
+	.then(() => createDirectories())
+	.then(() => Promise.all(resizePngPromises))
+	.then(values => savePngs(values))
+	.then(() => generateIcons('./icons/win', 'ico'))
+	.then(() => generateIcons('./icons/mac', 'icns'))
+	.then(() => renamePngs());
